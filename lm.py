@@ -32,10 +32,23 @@ class LM_LSTM(nn.Module):
     return (Variable(weight.new(self.num_layers, self.batch_size, self.embedding_dim).zero_()),
             Variable(weight.new(self.num_layers, self.batch_size, self.embedding_dim).zero_()))
 
-  def forward(self, inputs, hidden):
+  def forward(self, inputs, hidden, is_train, indices, lam):
     embeds = self.dropout(self.word_embeddings(inputs))
+
+
+    if is_train and False:
+        embeds = embeds.permute(1,0,2)
+        embeds_shuffled = embeds[indices]
+        new_embeds = embeds*lam + embeds_shuffled*(1-lam)
+        embeds = new_embeds.permute(1,0,2).contiguous()
+
     lstm_out, hidden = self.lstm(embeds, hidden)
     lstm_out = self.dropout(lstm_out)
+
+    if is_train and True:
+        lstm_out = lstm_out*lam + lstm_out.permute(1,0,2)[indices].permute(1,0,2)*(1-lam)
+        lstm_out = lstm_out.contiguous()
+
     logits = self.sm_fc(lstm_out.view(-1, self.embedding_dim))
     return logits.view(self.num_steps, self.batch_size, self.vocab_size), hidden
 
@@ -45,3 +58,6 @@ def repackage_hidden(h):
     return Variable(h.data)
   else:
     return tuple(repackage_hidden(v) for v in h)
+
+
+

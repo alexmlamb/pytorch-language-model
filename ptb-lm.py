@@ -19,7 +19,7 @@ parser.add_argument('--num_layers', type=int, default=2,
                     help='number of LSTM layers')
 parser.add_argument('--batch_size', type=int, default=20,
                     help='batch size')
-parser.add_argument('--num_epochs', type=int, default=40,
+parser.add_argument('--num_epochs', type=int, default=200,
                     help='number of epochs')
 parser.add_argument('--dp_keep_prob', type=float, default=0.35,
                     help='dropout *keep* probability')
@@ -27,9 +27,14 @@ parser.add_argument('--inital_lr', type=float, default=20.0,
                     help='initial learning rate')
 parser.add_argument('--save', type=str,  default='lm_model.pt',
                     help='path to save the final model')
+parser.add_argument('--mixup_alpha', type=float, default=1.0)
 args = parser.parse_args()
 
+print(args)
+
 criterion = nn.CrossEntropyLoss()
+
+
 def run_epoch(model, data, is_train=False, lr=1.0):
   """Runs the model on the given data."""
   if is_train:
@@ -45,11 +50,37 @@ def run_epoch(model, data, is_train=False, lr=1.0):
     inputs = Variable(torch.from_numpy(x.astype(np.int64)).transpose(0, 1).contiguous()).cuda()
     model.zero_grad()
     hidden = repackage_hidden(hidden)
-    outputs, hidden = model(inputs, hidden)
+
+    num_steps_time, bs = inputs.size()
+
+    indices = np.random.permutation(bs)
+
     targets = Variable(torch.from_numpy(y.astype(np.int64)).transpose(0, 1).contiguous()).cuda()
+
+    if is_train:
+        #alpha = 0.1
+        lam = np.random.beta(args.mixup_alpha, args.mixup_alpha)
+        #lam = np.random.uniform(0.95, 1.0)
+        lam = Variable(torch.from_numpy(np.array([lam]).astype('float32')).cuda())
+
+        targets = targets.permute(1,0)
+        target_shuffled = targets[indices]
+        targets = targets.permute(1,0).contiguous()
+        target_shuffled = target_shuffled.permute(1,0).contiguous()
+
+        tt_shuffled = torch.squeeze(target_shuffled.view(-1, model.batch_size * model.num_steps))
+
+    targets = Variable(torch.from_numpy(y.astype(np.int64)).transpose(0, 1).contiguous()).cuda()
+
     tt = torch.squeeze(targets.view(-1, model.batch_size * model.num_steps))
 
-    loss = criterion(outputs.view(-1, model.vocab_size), tt)
+    if is_train:
+        outputs, hidden = model(inputs, hidden, is_train, indices, lam)
+        loss = lam*criterion(outputs.view(-1, model.vocab_size), tt) + (1-lam)*criterion(outputs.view(-1, model.vocab_size), tt_shuffled)
+    else:
+        outputs, hidden = model(inputs, hidden, False, None, None)
+        loss = criterion(outputs.view(-1, model.vocab_size), tt)
+    
     costs += loss.data[0] * model.num_steps
     iters += model.num_steps
 
